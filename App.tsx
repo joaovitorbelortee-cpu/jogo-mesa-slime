@@ -18,7 +18,7 @@ const MAP_WIDTH = 100;
 const MAP_HEIGHT = 100;
 const TOWN_POS = { x: 50, y: 50 };
 const ACTIONS_PER_DAY = 20; 
-const AGGRO_RANGE = 8; // Tiles within which monsters chase player
+const AGGRO_RANGE = 5; // Tiles within which monsters chase player (Reduced from 8)
 const SAFE_ZONE = 15; // Monsters cannot spawn this close to town
 
 // MONSTER POOL - EXPANDED BESTIARY
@@ -180,6 +180,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
+          // Prevent interactions when typing in chat or repeating key press
+          if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA' || e.repeat) return;
+
           if ((e.key === 'f' || e.key === 'F') && gameState === GameState.Playing) {
               if (mapData[playerPosition.y] && mapData[playerPosition.y][playerPosition.x] === TileType.TOWN) {
                   setGameMode(prev => prev === GameMode.MAP ? GameMode.TOWN : GameMode.MAP);
@@ -435,8 +438,11 @@ const App: React.FC = () => {
                   else moveY = dyTown > 0 ? 1 : -1;
               } else if (distPlayer < AGGRO_RANGE) {
                   // AGGRO AI: Chase Player
-                  if (Math.abs(dxPlayer) > Math.abs(dyPlayer)) moveX = dxPlayer > 0 ? 1 : -1;
-                  else moveY = dyPlayer > 0 ? 1 : -1;
+                  // 60% chance to move, making them less relentless
+                  if (Math.random() < 0.6) {
+                      if (Math.abs(dxPlayer) > Math.abs(dyPlayer)) moveX = dxPlayer > 0 ? 1 : -1;
+                      else moveY = dyPlayer > 0 ? 1 : -1;
+                  }
               } else {
                   // PASSIVE AI: Wander (Brownian Motion)
                   // 20% chance to move in a random direction, 80% stand still
@@ -554,6 +560,9 @@ const App: React.FC = () => {
 
   const handleMove = (newPos: Position) => {
       if (isLoading || gameState === GameState.GameOver) return;
+      // Prevent movement if the Town Menu is open.
+      if (gameMode === GameMode.TOWN) return;
+
       if (newPos.x < 0 || newPos.x >= MAP_WIDTH || newPos.y < 0 || newPos.y >= MAP_HEIGHT) return;
       const tile = mapData[newPos.y][newPos.x];
       if (tile === TileType.TREE || tile === TileType.MOUNTAIN || tile === TileType.WATER) return;
@@ -563,6 +572,8 @@ const App: React.FC = () => {
 
       if (tile === TileType.TOWN && gameMode !== GameMode.TOWN) setVisualEvents(["'F' para Vila"]);
       else if (tile !== TileType.TOWN && gameMode === GameMode.TOWN) {
+          // Note: Logic here is now unreachable because movement is blocked in TOWN mode.
+          // Keeping it for safety if we change behavior later.
           setGameMode(GameMode.MAP);
           addSystemMessage("🌲 Explorando...");
       }
@@ -738,7 +749,8 @@ const App: React.FC = () => {
                         {gameMode === GameMode.MAP && <span className="text-xs text-slate-500">Use WASD | 'F' Vila</span>}
                     </div>
                     <form onSubmit={handleManualCommand} className="flex gap-2">
-                        <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="Comando..." className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500" disabled={isLoading || gameState === GameState.GameOver} autoFocus />
+                        {/* Remove autoFocus to prevent capturing F key immediately */}
+                        <input type="text" value={inputText} onChange={(e) => setInputText(e.target.value)} placeholder="Comando..." className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500" disabled={isLoading || gameState === GameState.GameOver} />
                         <button type="submit" disabled={isLoading || !inputText.trim()} className="bg-blue-600 hover:bg-blue-500 font-bold py-2 px-6 rounded-lg text-white">ENVIAR</button>
                     </form>
                 </div>

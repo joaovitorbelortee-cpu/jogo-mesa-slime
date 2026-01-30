@@ -3,8 +3,9 @@ import { GoogleGenAI, Content, Type, Schema } from "@google/genai";
 import { GameTurnResult, PlayerStats, KingdomResources } from "../types";
 import { SYSTEM_INSTRUCTION } from "../constants";
 
-// Models - UPGRADED TO PRO FOR COMPLEX STRATEGY
-const TEXT_MODEL = 'gemini-3-pro-preview'; 
+// Models - SWITCHED TO FLASH FOR BETTER RATE LIMITS
+// 'gemini-3-flash-preview' is extremely capable and has much higher quotas than Pro.
+const TEXT_MODEL = 'gemini-3-flash-preview'; 
 const IMAGE_MODEL = 'gemini-2.5-flash-image'; 
 
 let ai: GoogleGenAI | null = null;
@@ -21,16 +22,14 @@ const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 // Helper to clean JSON string from Markdown backticks
 const cleanJSON = (text: string): string => {
-    // Removes ```json at start, ``` at start, and ``` at end
     return text.replace(/^```json\s*/, '').replace(/^```\s*/, '').replace(/\s*```$/, '');
 };
 
-// Retry wrapper
-async function retryOperation<T>(operation: () => Promise<T>, retries = 3, baseDelay = 2000): Promise<T> {
+// Improved Retry with Exponential Backoff
+async function retryOperation<T>(operation: () => Promise<T>, retries = 5, baseDelay = 1000): Promise<T> {
     try {
         return await operation();
     } catch (error: any) {
-        // Check for 429 (Resource Exhausted) or 503 (Service Unavailable)
         const isRateLimit = 
             error.status === 429 || 
             error.code === 429 || 
@@ -40,10 +39,11 @@ async function retryOperation<T>(operation: () => Promise<T>, retries = 3, baseD
         const isServerOverload = error.status === 503 || error.code === 503;
 
         if (retries > 0 && (isRateLimit || isServerOverload)) {
-            const delayTime = baseDelay * (4 - retries); // Scaling delay
-            console.warn(`Gemini API Error (${error.status || error.code || 'Quota'}). Retrying in ${delayTime}ms...`);
+            // Exponential backoff: 1s, 2s, 4s, 8s, 16s... plus random jitter
+            const delayTime = (baseDelay * Math.pow(2, 5 - retries)) + (Math.random() * 500);
+            console.warn(`Gemini API Error (${error.status || error.code || 'Quota'}). Retrying in ${Math.round(delayTime)}ms...`);
             await wait(delayTime);
-            return retryOperation(operation, retries - 1, baseDelay * 2);
+            return retryOperation(operation, retries - 1, baseDelay); // Pass baseDelay through, don't multiply here as math is done above
         }
         throw error;
     }
@@ -59,7 +59,7 @@ const responseSchema: Schema = {
     },
     visualPanels: {
         type: Type.ARRAY,
-        description: "5 prompts visuais detalhados estilo Anime Studio 8bit.",
+        description: "2 prompts visuais detalhados estilo Anime Studio 8bit.", // Reduced suggestion
         items: { type: Type.STRING }
     },
     statsUpdate: {
@@ -207,7 +207,7 @@ export const generateGameTurn = async (
     
     const isQuota = error.status === 429 || error.status === 'RESOURCE_EXHAUSTED' || (error.message && error.message.includes('429'));
     const message = isQuota 
-        ? "O Grande Sábio detectou uma perturbação no fluxo de magicules (Cota de API excedida). Aguarde um momento e tente novamente." 
+        ? "O Grande Sábio detectou uma perturbação no fluxo de magicules (Cota de API excedida). Recuperando mana..." 
         : "O Grande Sábio falhou em calcular a causalidade do mundo. Tente novamente.";
 
     // Fallback logic to prevent crash
@@ -227,13 +227,13 @@ export const generateSingleImage = async (prompt: string): Promise<string | null
         const client = getAI();
         const fullPrompt = `Anime screenshot 'That Time I Got Reincarnated as a Slime'. Action/War/Politics scene. ${prompt}`;
         
-        // Use retry for images too, but less aggressive
+        // Use retry for images too
         const response = await retryOperation(async () => {
             return await client.models.generateContent({
                 model: IMAGE_MODEL,
                 contents: { parts: [{ text: fullPrompt }] },
             });
-        }, 1, 1000); // 1 retry
+        }, 2, 2000); 
 
         const candidates = response.candidates;
         if (candidates && candidates[0]?.content?.parts) {
@@ -251,10 +251,18 @@ export const generateSingleImage = async (prompt: string): Promise<string | null
 };
 
 export const generateComicStrip = async (panels: string[]): Promise<string[]> => {
-    // Limit to 3 images to save quota and time during retries, if needed. 
-    // Keeping 5 for now but if 429 persists, consider lowering.
-    const prompts = panels.slice(0, 5);
-    const imagePromises = prompts.map(prompt => generateSingleImage(prompt));
-    const results = await Promise.all(imagePromises);
-    return results.filter((url): url is string => url !== null);
+    // SEQUENTIAL GENERATION to avoid 429 errors
+    // Limit to 2 images max
+    const prompts = panels.slice(0, 2);
+    const results: string[] = [];
+    
+    for (const prompt of prompts) {
+        const url = await generateSingleImage(prompt);
+        if (url) {
+            results.push(url);
+            // Small delay between requests to help rate limits
+            if (prompts.length > 1) await wait(500);
+        }
+    }
+    return results;
 }
