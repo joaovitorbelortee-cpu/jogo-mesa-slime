@@ -1,0 +1,5 @@
+{
+  "name": "Isekai Slime Chronicles RPG",
+  "description": "Um RPG de texto imersivo baseado em 'That Time I Got Reincarnated as a Slime', com narração dinâmica e geração de imagens de cenas usando Gemini.",
+  "requestFramePermissions": []
+}
